@@ -50,9 +50,14 @@ class Encoder(nn.Module):
         return hidden
 
     def init_hidden(self, batch_size):
-        hidden = Variable(torch.zeros(self.n_layers, batch_size, self.hidden_size))
+        # NOTE: LSTM needs 2 hidden states
+        hidden = (
+            Variable(torch.zeros(self.n_layers, batch_size, self.hidden_size)),
+            Variable(torch.zeros(self.n_layers, batch_size, self.hidden_size))
+            )
         if is_cuda:
-            hidden = hidden.cuda()
+            hidden[0] = hidden[0].cuda()
+            hidden[1] = hidden[1].cuda()
         return hidden
 
 class Generator(nn.Module):
@@ -94,9 +99,14 @@ class Generator(nn.Module):
         return output, hidden
 
     def init_hidden(self, batch_size):
-        hidden = Variable(torch.zeros(self.n_layers, batch_size, self.hidden_size))
+        # NOTE: LSTM needs 2 hidden states
+        hidden = (
+            Variable(torch.zeros(self.n_layers, batch_size, self.hidden_size)),
+            Variable(torch.zeros(self.n_layers, batch_size, self.hidden_size))
+            )
         if is_cuda:
-            hidden = hidden.cuda()
+            hidden[0] = hidden[0].cuda()
+            hidden[1] = hidden[1].cuda()
         return hidden
 
 class Discriminator(nn.Module):
