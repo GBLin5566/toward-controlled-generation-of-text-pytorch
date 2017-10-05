@@ -4,6 +4,7 @@ from torch.autograd import Variable
 import numpy as np
 
 import Model.Constants as Constants
+from utils import check_cuda
 
 class Encoder(nn.Module):
     '''A LSTM encoder to encode a sentence into a latent vector z.'''
@@ -15,6 +16,7 @@ class Encoder(nn.Module):
             d_inner_hid=300,
             dropout=0.1,
             d_out_hid=300,
+            use_cuda=False,
             ):
         super(Encoder, self).__init__()
 
@@ -23,6 +25,7 @@ class Encoder(nn.Module):
 
         self.n_layers = n_layers
         self.d_inner_hid = d_inner_hid
+        self.use_cuda = use_cuda
 
         # NOTE:Maybe try GRU
         self.rnn = nn.LSTM(d_word_vec, d_inner_hid, n_layers, dropout=dropout)
@@ -43,6 +46,8 @@ class Encoder(nn.Module):
         self.z_mean = mu
         self.z_sigma = sigma
 
+        std_z_var = Variable(std_z, requires_grad=False)
+        std_z_var = check_cuda(std_z_var, self.use_cuda)
         return mu + sigma * Variable(std_z, requires_grad=False)
     
     def forward(self, src_seq, hidden):
@@ -62,6 +67,8 @@ class Encoder(nn.Module):
             Variable(torch.zeros(self.n_layers, batch_size, self.d_inner_hid)),
             Variable(torch.zeros(self.n_layers, batch_size, self.d_inner_hid))
             ]
+        hidden[0] = check_cuda(hidden[0], self.use_cuda)
+        hidden[1] = check_cuda(hidden[1], self.use_cuda)
         return hidden
 
     def init_weights(self):
@@ -82,6 +89,7 @@ class Generator(nn.Module):
             d_inner_hid=300,
             c_dim=1,
             dropout=0.1,
+            use_cuda=False,
             ):
         super(Generator, self).__init__()
 
@@ -90,6 +98,7 @@ class Generator(nn.Module):
         self.d_inner_hid = d_inner_hid
         self.c_dim = c_dim
         self.n_layers = n_layers
+        self.use_cuda = use_cuda
 
         self.target_word_emb = nn.Embedding(
             n_target_vocab, d_word_vec, padding_idx=Constants.PAD)
@@ -121,6 +130,7 @@ class Generator(nn.Module):
 
     def init_hidden_c_for_lstm(self, batch_size):
         hidden = Variable(torch.zeros(self.n_layers, batch_size, self.d_inner_hid))
+        hidden = check_cuda(hidden, self.use_cuda)
         return hidden
 
     def init_weights(self):

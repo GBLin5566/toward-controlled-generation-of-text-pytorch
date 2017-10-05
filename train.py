@@ -9,11 +9,13 @@ from torch.optim import RMSprop
 
 import Model.Constants as Constants
 from Model.Modules import Encoder, Generator, Discriminator
+from utils import check_cuda
 
-max_features = 25000
-maxlen = 2
+max_features = 15000
+maxlen = 50
 batch_size = 64
-epoch = 10
+epoch = 100
+use_cuda = False
 
 print('Loading data...')
 (x_train, y_train), (x_test, y_test) = imdb.load_data(
@@ -53,6 +55,7 @@ x_test = sequence.pad_sequences(
 def get_batch(data, index, batch_size, testing=False):
     tensor = torch.from_numpy(data[index:index+batch_size]).type(torch.LongTensor)
     input_data = Variable(tensor, volatile=testing)
+    input_data = check_cuda(input_data, use_cuda)
     output_data = input_data
     return input_data, output_data
 
@@ -62,14 +65,16 @@ def latent_loss(z_mean, z_stddev):
     stddev_sq = z_stddev * z_stddev
     return 0.5 * torch.mean(mean_sq + stddev_sq - torch.log(stddev_sq) - 1)
 
-encoder = Encoder(n_src_vocab=max_features)
-decoder = Generator(n_target_vocab=max_features)
+encoder = Encoder(n_src_vocab=max_features, use_cuda=use_cuda)
+decoder = Generator(n_target_vocab=max_features, use_cuda=use_cuda)
 criterion = torch.nn.CrossEntropyLoss()
 vae_parameters = list(encoder.parameters()) + list(decoder.parameters())
 vae_opt = RMSprop(vae_parameters)
 
 encoder.train()
 decoder.train()
+encoder = check_cuda(encoder, use_cuda)
+decoder = check_cuda(decoder, use_cuda)
 for epoch_index in range(epoch):
     for batch, index in enumerate(range(0, len(x_train) - 1, batch_size)):
         total_loss = 0
@@ -88,6 +93,7 @@ for epoch_index in range(epoch):
 
         c = torch.from_numpy(np.random.randint(2, size=(len(input_data), 1))).float()
         var_c = Variable(c, requires_grad=False)
+        var_c = check_cuda(var_c, use_cuda)
 
         # TODO: use iteration along first dim.
         cat_hidden = (torch.cat([enc_hidden[0][0], var_c], dim=1).unsqueeze(0), 
@@ -109,8 +115,8 @@ for epoch_index in range(epoch):
         total_loss.backward()
         vae_opt.step()
 
-        if batch % 10 == 0:
-            print("Epoch {} batch {}'s avg. loss: {}, latent loss: {}".format(
+        if batch % 25 == 0:
+            print("Epoch {} batch {}'s average language loss: {}, latent loss: {}".format(
                 epoch_index, 
                 batch, 
                 avg_loss,
