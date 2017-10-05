@@ -31,6 +31,8 @@ class Encoder(nn.Module):
         self._enc_mu = nn.Linear(d_inner_hid, d_out_hid)
         self._enc_log_sigma = nn.Linear(d_inner_hid, d_out_hid)
 
+        self.init_weights()
+
     # Borrow from https://github.com/ethanluoyc/pytorch-vae/blob/master/vae.py
     def _sample_latent(self, enc_hidden):
         mu = self._enc_mu(enc_hidden)
@@ -43,22 +45,30 @@ class Encoder(nn.Module):
 
         return mu + sigma * Variable(std_z, requires_grad=False)
     
-    def forward(self, src_seq, hidden, return_z=False):
+    def forward(self, src_seq, hidden):
         enc_input = self.drop(self.src_word_emb(src_seq))
-        # Reshape to (d_word_vec, batch_size, d_inner_hid)
+        # Reshape tensor's shape to (d_word_vec, batch_size, d_inner_hid)
         enc_input = enc_input.permute(1, 0, 2)
         _, hidden = self.rnn(enc_input, hidden)
-        if return_z:
-            hidden = self._sample_latent(hidden)
+        hidden = (
+                self._sample_latent(hidden[0]), 
+                hidden[1]
+                )
         return hidden
 
     def init_hidden(self, batch_size):
         # NOTE: LSTM needs 2 hidden states
-        hidden = (
+        hidden = [
             Variable(torch.zeros(self.n_layers, batch_size, self.d_inner_hid)),
             Variable(torch.zeros(self.n_layers, batch_size, self.d_inner_hid))
-            )
+            ]
         return hidden
+
+    def init_weights(self):
+        initrange = 0.1
+        self.src_word_emb.weight.data.uniform_(-initrange, initrange)
+        self._enc_mu.weight.data.uniform_(-initrange, initrange)
+        self._enc_log_sigma.weight.data.uniform_(-initrange, initrange)
 
 class Generator(nn.Module):
     '''A LSTM generator to synthesis a sentence with input (z, c)
@@ -86,25 +96,38 @@ class Generator(nn.Module):
 
         self.rnn = nn.LSTM(d_word_vec, d_inner_hid + c_dim, n_layers, dropout=dropout)
 
+        self.to_word_emb = nn.Sequential(
+                nn.Linear(d_inner_hid + c_dim, d_word_vec),
+                nn.ReLU()
+                )
         self.linear = nn.Linear(d_word_vec, n_target_vocab)
 
         self.softmax = nn.LogSoftmax()
 
-    def forward(self, target_word_emb, hidden):
+        self.init_weights()
+
+    def forward(self, target_word, hidden, low_temp=False):
+        ''' hidden is composed of z and c '''
+        ''' input is word-by-word in Generator '''
         dec_input = self.drop(
-            self.target_word_emb(target_word_emb))
+            self.target_word_emb(target_word)).unsqueeze(0)
         output, hidden = self.rnn(dec_input, hidden)
-        output = self.softmax(self.linear(output))
-        
+        output = self.to_word_emb(output)
+        output = self.linear(output)
+        # Low temperature factor trick
+        if low_temp:
+            output = self.softmax(output / 0.001)
         return output, hidden
 
-    def init_hidden(self, batch_size):
-        # NOTE: LSTM needs 2 hidden states
-        hidden = [
-            Variable(torch.zeros(self.n_layers, batch_size, self.d_inner_hid)),
-            Variable(torch.zeros(self.n_layers, batch_size, self.d_inner_hid))
-            ]
+    def init_hidden_c_for_lstm(self, batch_size):
+        hidden = Variable(torch.zeros(self.n_layers, batch_size, self.d_inner_hid))
         return hidden
+
+    def init_weights(self):
+        initrange = 0.1
+        self.target_word_emb.weight.data.uniform_(-initrange, initrange)
+        self.to_word_emb[0].weight.data.uniform_(-initrange, initrange)
+        self.linear.weight.data.uniform_(-initrange, initrange)
 
 class Discriminator(nn.Module):
     '''A CNN discriminator to classify the attributes given a sentence.'''

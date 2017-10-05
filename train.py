@@ -1,4 +1,3 @@
-
 import time
 
 import numpy as np
@@ -6,13 +5,15 @@ from keras.preprocessing import sequence
 from keras.datasets import imdb
 import torch
 from torch.autograd import Variable
+from torch.optim import RMSprop
 
 import Model.Constants as Constants
 from Model.Modules import Encoder, Generator, Discriminator
 
 max_features = 25000
-maxlen = 100
+maxlen = 2
 batch_size = 64
+epoch = 10
 
 print('Loading data...')
 (x_train, y_train), (x_test, y_test) = imdb.load_data(
@@ -55,18 +56,63 @@ def get_batch(data, index, batch_size, testing=False):
     output_data = input_data
     return input_data, output_data
 
+# Borrow from https://github.com/ethanluoyc/pytorch-vae/blob/master/vae.py
+def latent_loss(z_mean, z_stddev):
+    mean_sq = z_mean * z_mean
+    stddev_sq = z_stddev * z_stddev
+    return 0.5 * torch.mean(mean_sq + stddev_sq - torch.log(stddev_sq) - 1)
+
 encoder = Encoder(n_src_vocab=max_features)
 decoder = Generator(n_target_vocab=max_features)
+criterion = torch.nn.CrossEntropyLoss()
+vae_parameters = list(encoder.parameters()) + list(decoder.parameters())
+vae_opt = RMSprop(vae_parameters)
 
 encoder.train()
 decoder.train()
-total_loss = 0
-start_time = time.time()
-enc_hidden = encoder.init_hidden(batch_size)
-for batch, index in enumerate(range(0, len(x_train) - 1, batch_size)):
-    input_data, output_data = get_batch(x_train, index, batch_size)
-    encoder.zero_grad()
-    decoder.zero_grad()
+for epoch_index in range(epoch):
+    for batch, index in enumerate(range(0, len(x_train) - 1, batch_size)):
+        total_loss = 0
+        start_time = time.time()
+        
+        input_data, output_data = get_batch(x_train, index, batch_size)
+        encoder.zero_grad()
+        decoder.zero_grad()
+        vae_opt.zero_grad()
 
-    enc_hidden = encoder(input_data, enc_hidden)
-    print(enc_hidden)
+        # Considering the data may do not have enough data for batching
+        # Init. hidden with len(input_data) instead of batch_size
+        enc_hidden = encoder.init_hidden(len(input_data))
+        # Input of encoder is a batch of sequence.
+        enc_hidden = encoder(input_data, enc_hidden)
+
+        c = torch.from_numpy(np.random.randint(2, size=(len(input_data), 1))).float()
+        var_c = Variable(c, requires_grad=False)
+
+        # TODO: use iteration along first dim.
+        cat_hidden = (torch.cat([enc_hidden[0][0], var_c], dim=1).unsqueeze(0), 
+                torch.cat([decoder.init_hidden_c_for_lstm(len(input_data))[0], var_c], dim=1).unsqueeze(0))
+
+        # Reshape output_data from (batch_size, seq_len) to (seq_len, batch_size)
+        output_data = output_data.permute(1, 0)
+        # Input of decoder is a batch of word-by-word.
+        for index, word in enumerate(output_data):
+            if index == len(output_data) - 1:
+                break
+            output, cat_hidden = decoder(word, cat_hidden)
+            next_word = output_data[index+1]
+            total_loss += criterion(output.view(-1, max_features), next_word)
+        # Train
+        avg_loss = total_loss.data[0] / maxlen
+        ll = latent_loss(encoder.z_mean, encoder.z_sigma)
+        total_loss += ll
+        total_loss.backward()
+        vae_opt.step()
+
+        if batch % 10 == 0:
+            print("Epoch {} batch {}'s avg. loss: {}, latent loss: {}".format(
+                epoch_index, 
+                batch, 
+                avg_loss,
+                ll.data[0],
+                ))
