@@ -12,7 +12,7 @@ from Model.Modules import Encoder, Generator, Discriminator
 from utils import check_cuda
 
 max_features = 15000
-maxlen = 50
+maxlen = 500
 batch_size = 64
 epoch = 100
 use_cuda = False
@@ -58,6 +58,15 @@ def get_batch(data, index, batch_size, testing=False):
     input_data = check_cuda(input_data, use_cuda)
     output_data = input_data
     return input_data, output_data
+    
+def get_batch_label(data, label, index, batch_size, testing=False):
+    tensor = torch.from_numpy(data[index:index+batch_size]).type(torch.LongTensor)
+    input_data = Variable(tensor, volatile=testing)
+    input_data = check_cuda(input_data, use_cuda)
+    label_tensor = torch.from_numpy(label[index:index+batch_size]).type(torch.LongTensor)
+    output_data = Variable(label_tensor, volatile=testing)
+    output_data = check_cuda(output_data, use_cuda)
+    return input_data, output_data
 
 # Borrow from https://github.com/ethanluoyc/pytorch-vae/blob/master/vae.py
 def latent_loss(z_mean, z_stddev):
@@ -67,9 +76,41 @@ def latent_loss(z_mean, z_stddev):
 
 encoder = Encoder(n_src_vocab=max_features, use_cuda=use_cuda)
 decoder = Generator(n_target_vocab=max_features, use_cuda=use_cuda)
+discriminator = Discriminator(n_src_vocab=max_features, use_cuda=use_cuda)
 criterion = torch.nn.CrossEntropyLoss()
 vae_parameters = list(encoder.parameters()) + list(decoder.parameters())
 vae_opt = RMSprop(vae_parameters)
+d_opt = RMSprop(discriminator.parameters())
+
+def train_discriminator(discriminator):
+    discriminator = check_cuda(discriminator, use_cuda)
+    for epoch_index in range(epoch):
+        for batch, index in enumerate(range(0, len(x_train) - 1, batch_size)):
+            discriminator.train()
+            input_data, output_data = get_batch_label(x_train, y_train, index, batch_size)
+            
+            discriminator.zero_grad()
+
+            output = discriminator(input_data)
+            loss = criterion(output, output_data)
+            loss.backward()
+            d_opt.step()
+        
+            if batch % 25 == 0:
+                print("Epoch {} batch {}'s loss: {}".format(
+                    epoch_index, 
+                    batch, 
+                    loss.data[0],
+                    ))
+            if batch % 150 == 0 and batch:
+                input_data, output_data = get_batch_label(x_test, y_test, 0, len(y_test), testing=True)
+                _, predicted = torch.max(discriminator(input_data).data, 1)
+                correct = (predicted == torch.from_numpy(y_test)).sum()
+                print("Test accuracy {} %".format(
+                    100 * correct / len(y_test)
+                    ))
+
+train_discriminator(discriminator)
 
 encoder.train()
 decoder.train()

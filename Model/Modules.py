@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
+import torch.nn.functional as F
 import numpy as np
 
 import Model.Constants as Constants
@@ -141,8 +142,31 @@ class Generator(nn.Module):
 
 class Discriminator(nn.Module):
     '''A CNN discriminator to classify the attributes given a sentence.'''
-    def __init__(self):
+    def __init__(
+            self,
+            n_src_vocab,
+            d_word_vec=300,
+            dropout=0.1,
+            use_cuda=False,
+            ):
         super(Discriminator, self).__init__()
 
-    def forward(self):
-        pass
+        self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec, padding_idx=Constants.PAD)
+        self.drop = nn.Dropout(dropout)
+        self.conv = []
+        self.filter_size = [3, 4, 5]
+        self.conv1 = nn.Conv1d(500, 128, kernel_size=5)
+        self.conv2 = nn.Conv1d(128, 128, kernel_size=5)
+        self.conv3 = nn.Conv1d(128, 128, kernel_size=5)
+        self.linear = nn.Linear(3968, 2)
+
+    def forward(self, input_sentence):
+        emb_sentence = self.src_word_emb(input_sentence)
+        relu1 = F.relu(self.conv1(emb_sentence))
+        layer1 = F.max_pool1d(relu1, 3)
+        relu2 = F.relu(self.conv2(layer1))
+        layer2 = F.max_pool1d(relu2, 3)
+        layer3 = F.max_pool1d(F.relu(self.conv2(layer2)), 10)
+        flatten = self.drop(layer2.view(layer3.size()[0], -1))
+        logit = self.linear(flatten)
+        return logit
