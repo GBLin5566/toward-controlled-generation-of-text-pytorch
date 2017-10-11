@@ -126,7 +126,8 @@ class Generator(nn.Module):
         output = self.linear(output)
         # Low temperature factor trick
         if low_temp:
-            output = self.softmax(output / 0.001)
+            lowed_output = output[0] / 0.001
+            output = self.softmax(lowed_output)
         return output, hidden
 
     def init_hidden_c_for_lstm(self, batch_size):
@@ -145,7 +146,8 @@ class Discriminator(nn.Module):
     def __init__(
             self,
             n_src_vocab,
-            d_word_vec=300,
+            maxlen,
+            d_word_vec=150,
             dropout=0.1,
             use_cuda=False,
             ):
@@ -153,10 +155,10 @@ class Discriminator(nn.Module):
 
         self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec, padding_idx=Constants.PAD)
         self.drop = nn.Dropout(dropout)
-        self.conv1 = nn.Conv1d(500, 128, kernel_size=5)
+        self.conv1 = nn.Conv1d(maxlen, 128, kernel_size=5)
         self.conv2 = nn.Conv1d(128, 128, kernel_size=5)
         self.conv3 = nn.Conv1d(128, 128, kernel_size=5)
-        self.linear = nn.Linear(3968, 2)
+        self.linear = nn.Linear(1792, 2)
         self.softmax = nn.LogSoftmax()
 
     def forward(self, input_sentence, is_softmax=False):

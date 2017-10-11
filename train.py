@@ -5,14 +5,14 @@ from keras.preprocessing import sequence
 from keras.datasets import imdb
 import torch
 from torch.autograd import Variable
-from torch.optim import RMSprop
+from torch.optim import Adam
 
 import Model.Constants as Constants
 from Model.Modules import Encoder, Generator, Discriminator
 from utils import check_cuda
 
-max_features = 15000
-maxlen = 500
+max_features = 10
+maxlen = 100
 batch_size = 64
 epoch = 3
 c_dim = 2
@@ -55,17 +55,17 @@ x_test = sequence.pad_sequences(
 
 def get_batch(data, index, batch_size, testing=False):
     tensor = torch.from_numpy(data[index:index+batch_size]).type(torch.LongTensor)
-    input_data = Variable(tensor, volatile=testing)
+    input_data = Variable(tensor, volatile=testing, requires_grad=False)
     input_data = check_cuda(input_data, use_cuda)
     output_data = input_data
     return input_data, output_data
     
 def get_batch_label(data, label, index, batch_size, testing=False):
     tensor = torch.from_numpy(data[index:index+batch_size]).type(torch.LongTensor)
-    input_data = Variable(tensor, volatile=testing)
+    input_data = Variable(tensor, volatile=testing, requires_grad=False)
     input_data = check_cuda(input_data, use_cuda)
     label_tensor = torch.from_numpy(label[index:index+batch_size]).type(torch.LongTensor)
-    output_data = Variable(label_tensor, volatile=testing)
+    output_data = Variable(label_tensor, volatile=testing, requires_grad=False)
     output_data = check_cuda(output_data, use_cuda)
     return input_data, output_data
 
@@ -86,7 +86,8 @@ decoder = Generator(
         use_cuda=use_cuda,
         )
 discriminator = Discriminator(
-        n_src_vocab=max_features, 
+        n_src_vocab=max_features,
+        maxlen=maxlen,
         use_cuda=use_cuda,
         )
 encoder = check_cuda(encoder, use_cuda)
@@ -94,8 +95,8 @@ decoder = check_cuda(decoder, use_cuda)
 discriminator = check_cuda(discriminator, use_cuda)
 criterion = torch.nn.CrossEntropyLoss()
 vae_parameters = list(encoder.parameters()) + list(decoder.parameters())
-vae_opt = RMSprop(vae_parameters)
-d_opt = RMSprop(discriminator.parameters())
+vae_opt = Adam(vae_parameters)
+d_opt = Adam(discriminator.parameters())
 
 def train_discriminator(discriminator):
     # TODO: empirical Shannon entropy
@@ -118,7 +119,7 @@ def train_discriminator(discriminator):
                     batch, 
                     loss.data[0],
                     ))
-            if print_epoch == epoch_index:
+            if print_epoch == epoch_index and print_epoch:
                 discriminator.eval()
                 print_epoch = epoch_index + 1
                 input_data, output_data = get_batch_label(x_test, y_test, 0, len(y_test), testing=True)
@@ -156,7 +157,6 @@ def train_vae(encoder, decoder):
             c = torch.from_numpy(one_hot_array).float()
             var_c = Variable(c, requires_grad=False)
             var_c = check_cuda(var_c, use_cuda)
-
             # TODO: use iteration along first dim.
             cat_hidden = (torch.cat([enc_hidden[0][0], var_c], dim=1).unsqueeze(0), 
                     torch.cat([decoder.init_hidden_c_for_lstm(len(input_data))[0], var_c], dim=1).unsqueeze(0))
@@ -187,12 +187,43 @@ def train_vae(encoder, decoder):
 
 def train_vae_with_attr_loss(encoder, decoder, discriminator):
     # TODO: add attr_loss training
-    pass
+    for epoch_index in range(epoch):
+        for batch, index in enumerate(range(0, len(x_train) - 1, batch_size)):
+            input_data, output_data = get_batch_label(x_train, y_train, index, batch_size)
+            
+            enc_hidden = encoder.init_hidden(len(input_data))
+            enc_hidden = encoder(input_data, enc_hidden)
+   
+            target = np.array([output_data.data.numpy()]).reshape(-1)
+            one_hot_array = np.eye(c_dim)[target]
+            
+            c = torch.from_numpy(one_hot_array).float()
+            var_c = Variable(c, requires_grad=False)
+            var_c = check_cuda(var_c, use_cuda)
+            # TODO: use iteration along first dim.
+            cat_hidden = (torch.cat([enc_hidden[0][0], var_c], dim=1).unsqueeze(0), 
+                    torch.cat([decoder.init_hidden_c_for_lstm(len(input_data))[0], var_c], dim=1).unsqueeze(0))
 
+            
+            batch_init_word = np.full((batch_size), Constants.BOS)
+            generated = False
+
+            for index in range(maxlen):
+                if generated:
+                    word = Variable(torch.from_numpy(batch_init_word[-1]).long(), requires_grad=False)
+                else:
+                    word = Variable(torch.from_numpy(batch_init_word).long(), requires_grad=False)
+                word = check_cuda(word, use_cuda)
+                output, cat_hidden = decoder(word, cat_hidden, low_temp=True)
+                print(output)
+                print(batch_init_word)
+                batch_init_word = np.vstack((batch_init_word, output))
+                generated = True
 
 def main_alg(encoder, decoder, discriminator):
     train_vae(encoder, decoder)
     repeat_times = 10
     for repeat_index in range(repeat_times):
         train_discriminator(discriminator)
-
+train_vae_with_attr_loss(encoder, decoder, discriminator)
+#train_vae(encoder, decoder)
