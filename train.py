@@ -14,7 +14,8 @@ from utils import check_cuda
 max_features = 15000
 maxlen = 500
 batch_size = 64
-epoch = 100
+epoch = 3
+c_dim = 2
 use_cuda = False
 
 print('Loading data...')
@@ -74,16 +75,31 @@ def latent_loss(z_mean, z_stddev):
     stddev_sq = z_stddev * z_stddev
     return 0.5 * torch.mean(mean_sq + stddev_sq - torch.log(stddev_sq) - 1)
 
-encoder = Encoder(n_src_vocab=max_features, use_cuda=use_cuda)
-decoder = Generator(n_target_vocab=max_features, use_cuda=use_cuda)
-discriminator = Discriminator(n_src_vocab=max_features, use_cuda=use_cuda)
+# Make instances
+encoder = Encoder(
+        n_src_vocab=max_features, 
+        use_cuda=use_cuda,
+        )
+decoder = Generator(
+        n_target_vocab=max_features, 
+        c_dim=c_dim,
+        use_cuda=use_cuda,
+        )
+discriminator = Discriminator(
+        n_src_vocab=max_features, 
+        use_cuda=use_cuda,
+        )
+encoder = check_cuda(encoder, use_cuda)
+decoder = check_cuda(decoder, use_cuda)
+discriminator = check_cuda(discriminator, use_cuda)
 criterion = torch.nn.CrossEntropyLoss()
 vae_parameters = list(encoder.parameters()) + list(decoder.parameters())
 vae_opt = RMSprop(vae_parameters)
 d_opt = RMSprop(discriminator.parameters())
 
 def train_discriminator(discriminator):
-    discriminator = check_cuda(discriminator, use_cuda)
+    # TODO: empirical Shannon entropy
+    print_epoch = 0
     for epoch_index in range(epoch):
         for batch, index in enumerate(range(0, len(x_train) - 1, batch_size)):
             discriminator.train()
@@ -97,69 +113,86 @@ def train_discriminator(discriminator):
             d_opt.step()
         
             if batch % 25 == 0:
-                print("Epoch {} batch {}'s loss: {}".format(
+                print("[Discriminator] Epoch {} batch {}'s loss: {}".format(
                     epoch_index, 
                     batch, 
                     loss.data[0],
                     ))
-            if batch % 150 == 0 and batch:
+            if print_epoch == epoch_index:
+                discriminator.eval()
+                print_epoch = epoch_index + 1
                 input_data, output_data = get_batch_label(x_test, y_test, 0, len(y_test), testing=True)
                 _, predicted = torch.max(discriminator(input_data).data, 1)
                 correct = (predicted == torch.from_numpy(y_test)).sum()
-                print("Test accuracy {} %".format(
+                print("[Discriminator] Test accuracy {} %".format(
                     100 * correct / len(y_test)
                     ))
 
-train_discriminator(discriminator)
+def train_vae(encoder, decoder):
+    encoder.train()
+    decoder.train()
+    for epoch_index in range(epoch):
+        for batch, index in enumerate(range(0, len(x_train) - 1, batch_size)):
+            total_loss = 0
+            start_time = time.time()
+            
+            input_data, output_data = get_batch(x_train, index, batch_size)
+            encoder.zero_grad()
+            decoder.zero_grad()
+            vae_opt.zero_grad()
 
-encoder.train()
-decoder.train()
-encoder = check_cuda(encoder, use_cuda)
-decoder = check_cuda(decoder, use_cuda)
-for epoch_index in range(epoch):
-    for batch, index in enumerate(range(0, len(x_train) - 1, batch_size)):
-        total_loss = 0
-        start_time = time.time()
-        
-        input_data, output_data = get_batch(x_train, index, batch_size)
-        encoder.zero_grad()
-        decoder.zero_grad()
-        vae_opt.zero_grad()
+            # Considering the data may do not have enough data for batching
+            # Init. hidden with len(input_data) instead of batch_size
+            enc_hidden = encoder.init_hidden(len(input_data))
+            # Input of encoder is a batch of sequence.
+            enc_hidden = encoder(input_data, enc_hidden)
 
-        # Considering the data may do not have enough data for batching
-        # Init. hidden with len(input_data) instead of batch_size
-        enc_hidden = encoder.init_hidden(len(input_data))
-        # Input of encoder is a batch of sequence.
-        enc_hidden = encoder(input_data, enc_hidden)
+            # Generate the random one-hot array from prior p(c)
+            # NOTE: Assume general distribution for now
+            random_one_dim = np.random.randint(c_dim, size=len(input_data))
+            one_hot_array = np.zeros((len(input_data), c_dim))
+            one_hot_array[np.arange(len(input_data)), random_one_dim] = 1
+            
+            c = torch.from_numpy(one_hot_array).float()
+            var_c = Variable(c, requires_grad=False)
+            var_c = check_cuda(var_c, use_cuda)
 
-        c = torch.from_numpy(np.random.randint(2, size=(len(input_data), 1))).float()
-        var_c = Variable(c, requires_grad=False)
-        var_c = check_cuda(var_c, use_cuda)
+            # TODO: use iteration along first dim.
+            cat_hidden = (torch.cat([enc_hidden[0][0], var_c], dim=1).unsqueeze(0), 
+                    torch.cat([decoder.init_hidden_c_for_lstm(len(input_data))[0], var_c], dim=1).unsqueeze(0))
 
-        # TODO: use iteration along first dim.
-        cat_hidden = (torch.cat([enc_hidden[0][0], var_c], dim=1).unsqueeze(0), 
-                torch.cat([decoder.init_hidden_c_for_lstm(len(input_data))[0], var_c], dim=1).unsqueeze(0))
+            # Reshape output_data from (batch_size, seq_len) to (seq_len, batch_size)
+            output_data = output_data.permute(1, 0)
+            # Input of decoder is a batch of word-by-word.
+            for index, word in enumerate(output_data):
+                if index == len(output_data) - 1:
+                    break
+                output, cat_hidden = decoder(word, cat_hidden)
+                next_word = output_data[index+1]
+                total_loss += criterion(output.view(-1, max_features), next_word)
+            # Train
+            avg_loss = total_loss.data[0] / maxlen
+            ll = latent_loss(encoder.z_mean, encoder.z_sigma)
+            total_loss += ll
+            total_loss.backward()
+            vae_opt.step()
 
-        # Reshape output_data from (batch_size, seq_len) to (seq_len, batch_size)
-        output_data = output_data.permute(1, 0)
-        # Input of decoder is a batch of word-by-word.
-        for index, word in enumerate(output_data):
-            if index == len(output_data) - 1:
-                break
-            output, cat_hidden = decoder(word, cat_hidden)
-            next_word = output_data[index+1]
-            total_loss += criterion(output.view(-1, max_features), next_word)
-        # Train
-        avg_loss = total_loss.data[0] / maxlen
-        ll = latent_loss(encoder.z_mean, encoder.z_sigma)
-        total_loss += ll
-        total_loss.backward()
-        vae_opt.step()
+            if batch % 25 == 0:
+                print("[VAE] Epoch {} batch {}'s average language loss: {}, latent loss: {}".format(
+                    epoch_index, 
+                    batch, 
+                    avg_loss,
+                    ll.data[0],
+                    ))
 
-        if batch % 25 == 0:
-            print("Epoch {} batch {}'s average language loss: {}, latent loss: {}".format(
-                epoch_index, 
-                batch, 
-                avg_loss,
-                ll.data[0],
-                ))
+def train_vae_with_attr_loss(encoder, decoder, discriminator):
+    # TODO: add attr_loss training
+    pass
+
+
+def main_alg(encoder, decoder, discriminator):
+    train_vae(encoder, decoder)
+    repeat_times = 10
+    for repeat_index in range(repeat_times):
+        train_discriminator(discriminator)
+

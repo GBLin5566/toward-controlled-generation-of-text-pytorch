@@ -153,14 +153,13 @@ class Discriminator(nn.Module):
 
         self.src_word_emb = nn.Embedding(n_src_vocab, d_word_vec, padding_idx=Constants.PAD)
         self.drop = nn.Dropout(dropout)
-        self.conv = []
-        self.filter_size = [3, 4, 5]
         self.conv1 = nn.Conv1d(500, 128, kernel_size=5)
         self.conv2 = nn.Conv1d(128, 128, kernel_size=5)
         self.conv3 = nn.Conv1d(128, 128, kernel_size=5)
         self.linear = nn.Linear(3968, 2)
+        self.softmax = nn.LogSoftmax()
 
-    def forward(self, input_sentence):
+    def forward(self, input_sentence, is_softmax=False):
         emb_sentence = self.src_word_emb(input_sentence)
         relu1 = F.relu(self.conv1(emb_sentence))
         layer1 = F.max_pool1d(relu1, 3)
@@ -169,4 +168,6 @@ class Discriminator(nn.Module):
         layer3 = F.max_pool1d(F.relu(self.conv2(layer2)), 10)
         flatten = self.drop(layer2.view(layer3.size()[0], -1))
         logit = self.linear(flatten)
+        if is_softmax:
+            logit = self.softmax(logit)
         return logit
