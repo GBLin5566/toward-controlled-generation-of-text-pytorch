@@ -111,23 +111,34 @@ class Generator(nn.Module):
                 nn.ReLU()
                 )
         self.linear = nn.Linear(d_word_vec, n_target_vocab)
+        # Speicial embbeding for cold temperature trick
+        self.one_hot_to_word_emb = nn.Linear(n_target_vocab, d_word_vec)
+        # Share embbedding weight
+        self.linear.weight = self.target_word_emb.weight
+        self.one_hot_to_word_emb.weight = torch.nn.Parameter(self.linear.weight.permute(1, 0).data)
 
-        self.softmax = nn.LogSoftmax()
+        self.softmax = nn.Softmax()
 
         self.init_weights()
 
-    def forward(self, target_word, hidden, low_temp=False):
+    def forward(self, target_word, hidden, low_temp=False, one_hot_input=False):
         ''' hidden is composed of z and c '''
         ''' input is word-by-word in Generator '''
-        dec_input = self.drop(
-            self.target_word_emb(target_word)).unsqueeze(0)
+        if one_hot_input:
+            dec_input = self.drop(
+                self.one_hot_to_word_emb(target_word))
+        else:
+            dec_input = self.drop(
+                self.target_word_emb(target_word)).unsqueeze(0)
         output, hidden = self.rnn(dec_input, hidden)
         output = self.to_word_emb(output)
         output = self.linear(output)
         # Low temperature factor trick
         if low_temp:
-            lowed_output = output[0] / 0.001
+            pre_soft = output[0]
+            lowed_output = pre_soft / 0.001
             output = self.softmax(lowed_output)
+            return output, hidden, pre_soft
         return output, hidden
 
     def init_hidden_c_for_lstm(self, batch_size):
@@ -161,8 +172,11 @@ class Discriminator(nn.Module):
         self.linear = nn.Linear(1792, 2)
         self.softmax = nn.LogSoftmax()
 
-    def forward(self, input_sentence, is_softmax=False):
-        emb_sentence = self.src_word_emb(input_sentence)
+    def forward(self, input_sentence, is_softmax=False, dont_pass_emb=False):
+        if dont_pass_emb:
+            emb_sentence = input_sentence
+        else:
+            emb_sentence = self.src_word_emb(input_sentence)
         relu1 = F.relu(self.conv1(emb_sentence))
         layer1 = F.max_pool1d(relu1, 3)
         relu2 = F.relu(self.conv2(layer1))

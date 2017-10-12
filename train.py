@@ -11,11 +11,12 @@ import Model.Constants as Constants
 from Model.Modules import Encoder, Generator, Discriminator
 from utils import check_cuda
 
-max_features = 10
-maxlen = 100
-batch_size = 64
+max_features = 10000
+maxlen = 20
+batch_size = 128
 epoch = 3
 c_dim = 2
+d_word_vec = 150
 use_cuda = False
 
 print('Loading data...')
@@ -96,6 +97,7 @@ discriminator = check_cuda(discriminator, use_cuda)
 criterion = torch.nn.CrossEntropyLoss()
 vae_parameters = list(encoder.parameters()) + list(decoder.parameters())
 vae_opt = Adam(vae_parameters)
+e_opt = Adam(encoder.parameters())
 d_opt = Adam(discriminator.parameters())
 
 def train_discriminator(discriminator):
@@ -189,6 +191,10 @@ def train_vae_with_attr_loss(encoder, decoder, discriminator):
     # TODO: add attr_loss training
     for epoch_index in range(epoch):
         for batch, index in enumerate(range(0, len(x_train) - 1, batch_size)):
+            encoder.zero_grad()
+            decoder.zero_grad()
+            vae_loss = 0
+            
             input_data, output_data = get_batch_label(x_train, y_train, index, batch_size)
             
             enc_hidden = encoder.init_hidden(len(input_data))
@@ -204,26 +210,43 @@ def train_vae_with_attr_loss(encoder, decoder, discriminator):
             cat_hidden = (torch.cat([enc_hidden[0][0], var_c], dim=1).unsqueeze(0), 
                     torch.cat([decoder.init_hidden_c_for_lstm(len(input_data))[0], var_c], dim=1).unsqueeze(0))
 
-            
-            batch_init_word = np.full((batch_size), Constants.BOS)
-            generated = False
+            batch_init_word = np.zeros((batch_size, max_features))
+            batch_init_word[np.arange(batch_size), Constants.BOS] = 1
+            batch_init_word = Variable(torch.from_numpy(batch_init_word)).float()
+            batch_init_word = check_cuda(batch_init_word, use_cuda)
 
-            for index in range(maxlen):
-                if generated:
-                    word = Variable(torch.from_numpy(batch_init_word[-1]).long(), requires_grad=False)
+            input_data = input_data.permute(1, 0)
+            for index in range(maxlen - 1):
+                if 'next_word' in locals():
+                    word = next_word
+                    word = check_cuda(word, use_cuda)
+                    output, cat_hidden, pre_soft = decoder(word, cat_hidden, low_temp=True, one_hot_input=True)
                 else:
-                    word = Variable(torch.from_numpy(batch_init_word).long(), requires_grad=False)
-                word = check_cuda(word, use_cuda)
-                output, cat_hidden = decoder(word, cat_hidden, low_temp=True)
-                print(output)
-                print(batch_init_word)
-                batch_init_word = np.vstack((batch_init_word, output))
-                generated = True
+                    word = batch_init_word
+                    word = check_cuda(word, use_cuda)
+                    output, cat_hidden, pre_soft = decoder(word, cat_hidden, low_temp=True, one_hot_input=True)
+                # From one-hot to word embedding
+                next_word = output
+                correct_word = input_data[index+1]
+                vae_loss += criterion(pre_soft.view(-1, max_features), correct_word)
+                if len(batch_init_word.size()) == 2:
+                    batch_init_word = batch_init_word.unsqueeze(1)
+                if len(next_word.size()) == 2:
+                    next_word = next_word.unsqueeze(1)
+                batch_init_word = torch.cat([batch_init_word, next_word], dim=1)
+            # NOTE Latent loss
+            ll = latent_loss(encoder.z_mean, encoder.z_sigma)
+            # NOTE L_attr_c loss
+            generated_sentence = batch_init_word
+            logit = discriminator(generated_sentence, dont_pass_emb=True)
+            l_attr_c = criterion(logit, output_data)
+            print(l_attr_c)
+            # NOTE L_attr_z loss
 
 def main_alg(encoder, decoder, discriminator):
     train_vae(encoder, decoder)
     repeat_times = 10
     for repeat_index in range(repeat_times):
         train_discriminator(discriminator)
-train_vae_with_attr_loss(encoder, decoder, discriminator)
 #train_vae(encoder, decoder)
+train_vae_with_attr_loss(encoder, decoder, discriminator)
