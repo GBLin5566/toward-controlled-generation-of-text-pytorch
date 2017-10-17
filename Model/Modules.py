@@ -49,7 +49,7 @@ class Encoder(nn.Module):
 
         std_z_var = Variable(std_z, requires_grad=False)
         std_z_var = check_cuda(std_z_var, self.use_cuda)
-        return mu + sigma * Variable(std_z, requires_grad=False)
+        return mu + sigma * std_z_var
     
     def forward(self, src_seq, hidden):
         enc_input = self.drop(self.src_word_emb(src_seq))
@@ -126,7 +126,7 @@ class Generator(nn.Module):
         ''' input is word-by-word in Generator '''
         if one_hot_input:
             dec_input = self.drop(
-                self.one_hot_to_word_emb(target_word))
+                self.one_hot_to_word_emb(target_word)).unsqueeze(0)
         else:
             dec_input = self.drop(
                 self.target_word_emb(target_word)).unsqueeze(0)
@@ -169,7 +169,7 @@ class Discriminator(nn.Module):
         self.conv1 = nn.Conv1d(maxlen, 128, kernel_size=5)
         self.conv2 = nn.Conv1d(128, 128, kernel_size=5)
         self.conv3 = nn.Conv1d(128, 128, kernel_size=5)
-        self.linear = nn.Linear(1792, 2)
+        self.linear = nn.Linear(141952, 2)
         self.softmax = nn.LogSoftmax()
 
     def forward(self, input_sentence, is_softmax=False, dont_pass_emb=False):

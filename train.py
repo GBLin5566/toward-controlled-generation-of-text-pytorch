@@ -17,7 +17,7 @@ batch_size = 128
 epoch = 3
 c_dim = 2
 d_word_vec = 150
-use_cuda = False
+use_cuda = True
 
 print('Loading data...')
 (x_train, y_train), (x_test, y_test) = imdb.load_data(
@@ -200,7 +200,7 @@ def train_vae_with_attr_loss(encoder, decoder, discriminator):
             enc_hidden = encoder.init_hidden(len(input_data))
             enc_hidden = encoder(input_data, enc_hidden)
    
-            target = np.array([output_data.data.numpy()]).reshape(-1)
+            target = np.array([output_data.cpu().data.numpy()]).reshape(-1)
             one_hot_array = np.eye(c_dim)[target]
             
             c = torch.from_numpy(one_hot_array).float()
@@ -218,7 +218,7 @@ def train_vae_with_attr_loss(encoder, decoder, discriminator):
             input_data = input_data.permute(1, 0)
             for index in range(maxlen - 1):
                 if 'next_word' in locals():
-                    word = next_word
+                    word = next_word.squeeze(1)
                     word = check_cuda(word, use_cuda)
                     output, cat_hidden, pre_soft = decoder(word, cat_hidden, low_temp=True, one_hot_input=True)
                 else:
@@ -248,5 +248,5 @@ def main_alg(encoder, decoder, discriminator):
     repeat_times = 10
     for repeat_index in range(repeat_times):
         train_discriminator(discriminator)
-#train_vae(encoder, decoder)
+train_vae(encoder, decoder)
 train_vae_with_attr_loss(encoder, decoder, discriminator)
