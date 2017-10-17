@@ -238,15 +238,22 @@ def train_vae_with_attr_loss(encoder, decoder, discriminator):
             ll = latent_loss(encoder.z_mean, encoder.z_sigma)
             # NOTE L_attr_c loss
             generated_sentence = batch_init_word
+            discriminator.eval()
             logit = discriminator(generated_sentence, dont_pass_emb=True)
             l_attr_c = criterion(logit, output_data)
-            print(l_attr_c)
             # NOTE L_attr_z loss
+            encoder.eval()
+            generated_sentence = decoder.one_hot_to_word_emb(generated_sentence)
+            encoded_gen = encoder.init_hidden(len(generated_sentence))
+            encoded_gen = encoder(generated_sentence, encoded_gen, dont_pass_emb=True)
+            mse_loss = torch.nn.MSELoss()
+            l_attr_z = mse_loss(encoded_gen, enc_hidden)
+            print(l_attr_z)
 
 def main_alg(encoder, decoder, discriminator):
     train_vae(encoder, decoder)
     repeat_times = 10
     for repeat_index in range(repeat_times):
         train_discriminator(discriminator)
-train_vae(encoder, decoder)
+#train_vae(encoder, decoder)
 train_vae_with_attr_loss(encoder, decoder, discriminator)

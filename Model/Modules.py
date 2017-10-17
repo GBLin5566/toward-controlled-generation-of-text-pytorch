@@ -51,10 +51,14 @@ class Encoder(nn.Module):
         std_z_var = check_cuda(std_z_var, self.use_cuda)
         return mu + sigma * std_z_var
     
-    def forward(self, src_seq, hidden):
-        enc_input = self.drop(self.src_word_emb(src_seq))
+    def forward(self, src_seq, hidden, dont_pass_emb=False):
+        if dont_pass_emb:
+            enc_input = self.drop(src_seq)
+        else:
+            enc_input = self.drop(self.src_word_emb(src_seq))
         # Reshape tensor's shape to (d_word_vec, batch_size, d_inner_hid)
         enc_input = enc_input.permute(1, 0, 2)
+        print(enc_input)
         _, hidden = self.rnn(enc_input, hidden)
         hidden = (
                 self._sample_latent(hidden[0]), 
