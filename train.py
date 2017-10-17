@@ -17,6 +17,8 @@ batch_size = 128
 epoch = 3
 c_dim = 2
 d_word_vec = 150
+lambda_c = 0.1
+lambda_z = 0.1
 use_cuda = True
 
 print('Loading data...')
@@ -98,6 +100,7 @@ criterion = torch.nn.CrossEntropyLoss()
 vae_parameters = list(encoder.parameters()) + list(decoder.parameters())
 vae_opt = Adam(vae_parameters)
 e_opt = Adam(encoder.parameters())
+g_opt = Adam(decoder.parameters())
 d_opt = Adam(discriminator.parameters())
 
 def train_discriminator(discriminator):
@@ -188,7 +191,6 @@ def train_vae(encoder, decoder):
                     ))
 
 def train_vae_with_attr_loss(encoder, decoder, discriminator):
-    # TODO: add attr_loss training
     for epoch_index in range(epoch):
         for batch, index in enumerate(range(0, len(x_train) - 1, batch_size)):
             encoder.zero_grad()
@@ -246,10 +248,28 @@ def train_vae_with_attr_loss(encoder, decoder, discriminator):
             generated_sentence = decoder.one_hot_to_word_emb(generated_sentence)
             encoded_gen = encoder.init_hidden(len(generated_sentence))
             encoded_gen = encoder(generated_sentence, encoded_gen, dont_pass_emb=True)
-            mse_loss = torch.nn.MSELoss()
-            l_attr_z = mse_loss(encoded_gen, enc_hidden)
-            print(l_attr_z)
+            l_attr_z = latent_loss(encoder.z_mean, encoder.z_sigma)
+            
+            avg_loss = vae_loss.data[0] / maxlen
 
+            total_vae_loss = vae_loss + ll
+            extra_decoder_loss = lambda_c * l_attr_c + lambda_z * l_attr_z
+            total_vae_loss.backward()
+            e_opt.step()
+            extra_decoder_loss.backward()
+            g_opt.step()
+
+            if batch % 25 == 0:
+                print("[Attr] Epoch {} batch {}'s average language loss: {}, latent loss: {}".format(
+                    epoch_index, 
+                    batch, 
+                    avg_loss,
+                    ll.data[0],
+                    ))
+                print("l_attr_c loss: {}, l_attr_z loss: {}".format(
+                    l_attr_c.data[0],
+                    l_attr_z.data[0],
+                    ))
 def main_alg(encoder, decoder, discriminator):
     train_vae(encoder, decoder)
     repeat_times = 10
