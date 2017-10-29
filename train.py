@@ -14,7 +14,7 @@ from utils import check_cuda
 max_features = 10000
 maxlen = 20
 batch_size = 128
-epoch = 3
+epoch = 1
 c_dim = 2
 d_word_vec = 150
 lambda_c = 0.1
@@ -195,7 +195,10 @@ def train_vae_with_attr_loss(encoder, decoder, discriminator):
         for batch, index in enumerate(range(0, len(x_train) - 1, batch_size)):
             encoder.zero_grad()
             decoder.zero_grad()
+            e_opt.zero_grad()
+            g_opt.zero_grad()
             vae_loss = 0
+            ll = 0
             
             input_data, output_data = get_batch_label(x_train, y_train, index, batch_size)
             
@@ -275,5 +278,6 @@ def main_alg(encoder, decoder, discriminator):
     repeat_times = 10
     for repeat_index in range(repeat_times):
         train_discriminator(discriminator)
+train_discriminator(discriminator)
 #train_vae(encoder, decoder)
-train_vae_with_attr_loss(encoder, decoder, discriminator)
+#train_vae_with_attr_loss(encoder, decoder, discriminator)
